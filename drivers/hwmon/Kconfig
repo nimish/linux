@@ -475,6 +475,18 @@ config SENSORS_CORSAIR_PSU
 	  This driver can also be built as a module. If so, the module
 	  will be called corsair-psu.
 
+config SENSORS_MSI_PSU
+	tristate "MSI PSU HID controller"
+	depends on USB_HID
+	help
+	  If you say yes here you get support for MSI PSUs with a USB HID
+	  interface.
+	  Currently this driver supports the MEG Ai1300P PCIE5
+	  and MEG Ai1100P PCIE5 ATX power supplies by MSI.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called msi-psu.
+
 config SENSORS_DRIVETEMP
 	tristate "Hard disk drives with temperature sensors"
 	depends on SCSI && ATA
