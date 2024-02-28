@@ -5,6 +5,8 @@
  * Copyright (C) 2024 Nimish Telang <nimish@telang.net>
  */
 
+#include "linux/kern_levels.h"
+#include "linux/printk.h"
 #include "linux/stddef.h"
 #include <linux/compiler.h>
 #include <linux/completion.h>
@@ -39,8 +41,13 @@ struct msipsu_priv {
 
 typedef __le16 linear11;
 
+struct msipsu_vi_pair {
+	linear11 in;
+	linear11 curr;
+} __packed;
+
 struct msipsu_getall_reply {
-	linear11 in_curr[MSI_PSU_RAIL_COUNT * 2]; /* VI pairs */
+	struct msipsu_vi_pair rails[MSI_PSU_RAIL_COUNT];
 	linear11 pout;
 	linear11 eff;
 	linear11 temp;
@@ -54,70 +61,20 @@ struct msipsu_channel_data {
 	char **labels;
 };
 
-static struct msipsu_channel_data msipsu_channel_setup[hwmon_max] = {
-	[hwmon_curr] = {
-		.alarm_attrs = HWMON_C_MAX_ALARM,
-		.scale = MILLI,
-		.data_offset = offsetof(struct msipsu_getall_reply, in_curr),
-		.labels = (char *[]){"curr_12V0", "curr_12V1", "curr_12V2",
-						 "curr_12V3", "curr_12V4", "curr_12V",
-						 "curr_5V", "curr_3V3"},
-	},
-	[hwmon_in] = {
-		.alarm_attrs = HWMON_I_MAX_ALARM | HWMON_I_MIN_ALARM,
-		.scale = MILLI,
-		.data_offset = offsetof(struct msipsu_getall_reply, in_curr),
-		.labels = (char *[]){"in_12V0", "in_12V1", "in_12V2", "in_12V3",
-						 "in_12V4", "in_12V", "in_5V", "in_3V3"}
-	},
-	[hwmon_temp] = {
-		.alarm_attrs = HWMON_T_MAX_ALARM,
-		.scale = MILLIDEGREE_PER_DEGREE,
-		.data_offset = offsetof(struct msipsu_getall_reply, temp),
-		.labels = (char *[]){ "temp" },
-	},
-	[hwmon_power] = {
-		.alarm_attrs = HWMON_P_MAX_ALARM,
-		.scale = MICROWATT_PER_WATT,
-		.data_offset = offsetof(struct msipsu_getall_reply, pout),
-		.labels = (char *[]){ "power" },
-	},
-	[hwmon_pwm] = {
-		.scale = 255,
-		.data_offset = offsetof(struct msipsu_getall_reply, pwm),
-		.labels = NULL,
-	},
-};
-
 /* All channels for V/I support identical features */
-
-static const struct hwmon_channel_info msipsu_in = {
-	.type = hwmon_in,
-	.config =
-		(u32[]){
-			[0 ... MSI_PSU_RAIL_COUNT - 1] =
-				HWMON_I_INPUT | HWMON_I_LABEL |
-				HWMON_I_MAX_ALARM | HWMON_I_MIN_ALARM,
-		},
-};
-
-static const struct hwmon_channel_info msipsu_curr = {
-	.type = hwmon_curr,
-	.config =
-		(u32[]){
-			[0 ... MSI_PSU_RAIL_COUNT -
-			 1] = HWMON_C_INPUT | HWMON_C_LABEL | HWMON_C_MAX_ALARM,
-		},
-};
-
 static const struct hwmon_channel_info *msipsu_info[] = {
 	HWMON_CHANNEL_INFO(chip, HWMON_C_REGISTER_TZ),
-	&msipsu_in,
-	&msipsu_curr,
+	HWMON_CHANNEL_INFO(in, [0 ... MSI_PSU_RAIL_COUNT - 1] =
+				       (HWMON_I_INPUT | HWMON_I_LABEL |
+					HWMON_I_MAX_ALARM | HWMON_I_MIN_ALARM)),
+	HWMON_CHANNEL_INFO(curr, [0 ... MSI_PSU_RAIL_COUNT - 1] =
+					 (HWMON_C_INPUT | HWMON_C_LABEL |
+					  HWMON_C_MAX_ALARM)),
 	HWMON_CHANNEL_INFO(power,
 			   HWMON_P_INPUT | HWMON_P_LABEL | HWMON_P_MAX_ALARM),
 	HWMON_CHANNEL_INFO(temp,
 			   HWMON_T_INPUT | HWMON_T_LABEL | HWMON_T_MAX_ALARM),
+
 	HWMON_CHANNEL_INFO(pwm, HWMON_PWM_INPUT),
 	NULL
 };
@@ -263,8 +220,11 @@ static int msipsu_handshake(struct msipsu_priv *priv)
 		return ret;
 	}
 
-	if (strcmp(data, expected_product)) {
-		hid_err(priv->hdev, "handshake failed (unexpected product)\n");
+	if (!strcmp(data, expected_product)) {
+		hid_err(priv->hdev, "handshake failed (expected %s)\n",
+			expected_product);
+		print_hex_dump(KERN_ERR, "response: ", DUMP_PREFIX_NONE, 16, 1,
+			       data, sizeof(data), true);
 		return -EIO;
 	}
 
@@ -307,14 +267,44 @@ static int msipsu_hwmon_search_alertstatus(struct msipsu_priv *priv,
 	return ret;
 }
 
+static struct msipsu_channel_data msipsu_channel_setup[hwmon_max] = {
+	[hwmon_curr] = {
+		.alarm_attrs = HWMON_C_MAX_ALARM,
+		.scale = MILLI,
+		.labels = (char *[]){"curr_12V0", "curr_12V1", "curr_12V2",
+						 "curr_12V3", "curr_12V4", "curr_12V",
+						 "curr_5V", "curr_3V3"},
+	},
+	[hwmon_in] = {
+		.alarm_attrs = HWMON_I_MAX_ALARM | HWMON_I_MIN_ALARM,
+		.scale = MILLI,
+		.labels = (char *[]){"in_12V0", "in_12V1", "in_12V2", "in_12V3",
+						 "in_12V4", "in_12V", "in_5V", "in_3V3"}
+	},
+	[hwmon_temp] = {
+		.alarm_attrs = HWMON_T_MAX_ALARM,
+		.scale = MILLIDEGREE_PER_DEGREE,
+		.labels = (char *[]){ "temp" },
+	},
+	[hwmon_power] = {
+		.alarm_attrs = HWMON_P_MAX_ALARM,
+		.scale = MICROWATT_PER_WATT,
+		.labels = (char *[]){ "power" },
+	},
+	[hwmon_pwm] = {
+		.scale = 255, /* extra division by 100 to account for percentage */
+	},
+};
+
 static int msipsu_read(struct device *dev, enum hwmon_sensor_types type,
 		       u32 attr, int channel, long *val)
 {
 	struct msipsu_priv *priv = dev_get_drvdata(dev);
+
 	struct msipsu_getall_reply reply;
 	int ret;
 
-	hid_dbg(priv->hdev,
+	hid_warn(priv->hdev,
 		"HWMON request received (type=%d, attr=%d, channel=%d)\n", type,
 		attr, channel);
 
@@ -331,11 +321,32 @@ static int msipsu_read(struct device *dev, enum hwmon_sensor_types type,
 	if (unlikely(ret < 0))
 		return ret;
 
-	size_t channel_shift =
-		(channel + (type == hwmon_curr)) * sizeof(linear11);
-	size_t offset = channel_data.data_offset + channel_shift;
+	print_hex_dump(KERN_WARNING, "msipsu_getall_reply: ", DUMP_PREFIX_NONE, 16,
+		       1, &reply, sizeof(reply), true);
 
-	linear11 data = ((u8 *)&reply)[offset];
+	linear11 data;
+	switch(type) {
+	case hwmon_in:
+		data = reply.rails[channel].in;
+		break;
+	case hwmon_curr:
+		data = reply.rails[channel].curr;
+		break;
+	case hwmon_temp:
+		data = reply.temp;
+		break;
+	case hwmon_power:
+		data = reply.pout;
+		break;
+	case hwmon_pwm:
+		data = reply.pwm;
+		break;
+	default:
+	/* should never happen */
+		return -EOPNOTSUPP;
+	}
+
+	hid_warn(priv->hdev, "data=0x%04x, scale=%d\n", data, channel_data.scale);
 
 	*val = linear11_to_int(data, channel_data.scale);
 
@@ -436,11 +447,16 @@ static int msipsu_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	priv->hwmon_dev = devm_hwmon_device_register_with_info(
 		&hdev->dev, "msipsu", priv, &msipsu_chip_info, NULL);
 
-	ret = IS_ERR_OR_NULL(priv->hwmon_dev);
-	if (ret)
-		hid_err(hdev, "hwmon device registration failed (%d)\n", ret);
+	if (IS_ERR(priv->hwmon_dev)) {
+		ret = PTR_ERR(priv->hwmon_dev);
+		hid_err(hdev, "hwmon_device_register failed (%d)\n", ret);
+		return ret;
+	}
+	return 0;
+}
 
-	return ret;
+static void msipsu_remove(struct hid_device *hdev)
+{
 }
 
 static const struct hid_device_id msipsu_idtable[] = {
@@ -454,6 +470,7 @@ static struct hid_driver msipsu_driver = {
 	.id_table = msipsu_idtable,
 	.probe = msipsu_probe,
 	.raw_event = msipsu_raw_event,
+	.remove = msipsu_remove,
 #ifdef CONFIG_PM
 	.resume = msipsu_resume,
 	.reset_resume = msipsu_resume,
