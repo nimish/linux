@@ -49,9 +49,6 @@ struct msipsu_getall_reply {
 
 struct msipsu_channel_data {
 	int alarm_attrs;
-	int int_attrs;
-	int str_attrs;
-	size_t channels;
 	s32 scale;
 	size_t data_offset;
 	char **labels;
@@ -60,9 +57,6 @@ struct msipsu_channel_data {
 static struct msipsu_channel_data msipsu_channel_setup[hwmon_max] = {
 	[hwmon_curr] = {
 		.alarm_attrs = HWMON_C_MAX_ALARM,
-		.int_attrs = HWMON_C_INPUT,
-		.str_attrs = HWMON_C_LABEL,
-		.channels = MSI_PSU_RAIL_COUNT,
 		.scale = MILLI,
 		.data_offset = offsetof(struct msipsu_getall_reply, in_curr),
 		.labels = (char *[]){"curr_12V0", "curr_12V1", "curr_12V2",
@@ -71,9 +65,6 @@ static struct msipsu_channel_data msipsu_channel_setup[hwmon_max] = {
 	},
 	[hwmon_in] = {
 		.alarm_attrs = HWMON_I_MAX_ALARM | HWMON_I_MIN_ALARM,
-		.int_attrs = HWMON_I_INPUT,
-		.str_attrs = HWMON_I_LABEL,
-		.channels = MSI_PSU_RAIL_COUNT,
 		.scale = MILLI,
 		.data_offset = offsetof(struct msipsu_getall_reply, in_curr),
 		.labels = (char *[]){"in_12V0", "in_12V1", "in_12V2", "in_12V3",
@@ -81,45 +72,22 @@ static struct msipsu_channel_data msipsu_channel_setup[hwmon_max] = {
 	},
 	[hwmon_temp] = {
 		.alarm_attrs = HWMON_T_MAX_ALARM,
-		.int_attrs = HWMON_T_INPUT,
-		.str_attrs = HWMON_T_LABEL,
-		.channels = 1,
 		.scale = MILLIDEGREE_PER_DEGREE,
 		.data_offset = offsetof(struct msipsu_getall_reply, temp),
 		.labels = (char *[]){ "temp" },
 	},
 	[hwmon_power] = {
 		.alarm_attrs = HWMON_P_MAX_ALARM,
-		.int_attrs = HWMON_P_INPUT,
-		.str_attrs = HWMON_P_LABEL,
-		.channels = 1,
 		.scale = MICROWATT_PER_WATT,
 		.data_offset = offsetof(struct msipsu_getall_reply, pout),
 		.labels = (char *[]){ "power" },
 	},
 	[hwmon_pwm] = {
-		.alarm_attrs = 0,
-		.int_attrs = HWMON_PWM_INPUT,
-		.channels = 1,
 		.scale = 255,
 		.data_offset = offsetof(struct msipsu_getall_reply, pwm),
 		.labels = NULL,
 	},
 };
-
-static bool msipsu_is_12v_rail(int channel)
-{
-	return ((channel) >= 0 && (channel) <= 5);
-}
-
-static bool msipsu_valid_channel(enum hwmon_sensor_types type, int channel)
-{
-	return likely((channel) >= 0 &&
-		      (channel) < msipsu_channel_setup[type].channels);
-}
-
-#define MSIPSU_VALID_ATTR(type, group, attr) \
-	(BIT(attr) & msipsu_channel_setup[type].group##_attrs)
 
 /* All channels for V/I support identical features */
 
@@ -157,12 +125,6 @@ static const struct hwmon_channel_info *msipsu_info[] = {
 static __pure enum msi_psu_alert_status
 msipsu_alarm_to_msialert(enum hwmon_sensor_types type, u32 attr, int channel)
 {
-	if (!msipsu_valid_channel(type, channel))
-		return -EOPNOTSUPP;
-
-	if (!MSIPSU_VALID_ATTR(type, alarm, attr))
-		return -EOPNOTSUPP;
-
 	enum msi_psu_alert_status ocp_alert_map[] = {
 		MSI_PSU_ALERT_STATUS_OCP_12V,  MSI_PSU_ALERT_STATUS_OCP_12V1,
 		MSI_PSU_ALERT_STATUS_OCP_12V2, MSI_PSU_ALERT_STATUS_OCP_12V3,
@@ -358,15 +320,9 @@ static int msipsu_read(struct device *dev, enum hwmon_sensor_types type,
 
 	struct msipsu_channel_data channel_data = msipsu_channel_setup[type];
 
-	if (!msipsu_valid_channel(type, channel))
-		return -EINVAL;
-
-	if (MSIPSU_VALID_ATTR(type, alarm, attr))
+	if (BIT(attr) & channel_data.alarm_attrs)
 		return msipsu_hwmon_search_alertstatus(priv, type, attr,
 						       channel, val);
-
-	if (!MSIPSU_VALID_ATTR(type, int, attr))
-		return -EINVAL;
 
 	ret = msipsu_usb_cmd_locked(priv, MSI_PSU_CMD_READ,
 				    MSI_PSU_CMD_READ_ALL, &reply,
@@ -392,12 +348,6 @@ static int msipsu_read(struct device *dev, enum hwmon_sensor_types type,
 static int msipsu_read_string(struct device *dev, enum hwmon_sensor_types type,
 			      u32 attr, int channel, const char **str)
 {
-	if (!msipsu_valid_channel(type, channel))
-		return -EINVAL;
-
-	if (!msipsu_channel_setup[type].labels)
-		return -EINVAL;
-
 	*str = msipsu_channel_setup[type].labels[channel];
 	return 0;
 }
@@ -405,20 +355,12 @@ static int msipsu_read_string(struct device *dev, enum hwmon_sensor_types type,
 static umode_t msipsu_is_visible(const void *data, enum hwmon_sensor_types type,
 				 u32 attr, int channel)
 {
-	if (!msipsu_valid_channel(type, channel))
-		return 0;
-
 	/* protocol bug: 12V OVP alarm is always set since it's 0x00 */
 	if (type == hwmon_in && attr == hwmon_in_max_alarm &&
-	    msipsu_is_12v_rail(channel))
+	    ((channel) >= 0 && (channel) <= 5))
 		return 0;
 
-	if (MSIPSU_VALID_ATTR(type, int, attr) ||
-	    MSIPSU_VALID_ATTR(type, alarm, attr) ||
-	    MSIPSU_VALID_ATTR(type, str, attr))
-		return (umode_t)0444;
-
-	return 0;
+	return (umode_t)0444;
 }
 
 static int msipsu_raw_event(struct hid_device *hdev, struct hid_report *report,
