@@ -763,6 +763,7 @@ __hwmon_device_register(struct device *dev, const char *name, void *drvdata,
 	struct device *hdev;
 	struct device *tdev = dev;
 	int i, err, id;
+	
 
 	/* Complain about invalid characters in hwmon name attribute */
 	if (name && (!strlen(name) || strpbrk(name, "-* \t\n")))
@@ -1005,25 +1006,19 @@ devm_hwmon_device_register_with_groups(struct device *dev, const char *name,
 				       void *drvdata,
 				       const struct attribute_group **groups)
 {
-	struct device **ptr, *hwdev;
+	struct device *hwdev;
 
 	if (!dev)
 		return ERR_PTR(-EINVAL);
 
-	ptr = devres_alloc(devm_hwmon_release, sizeof(*ptr), GFP_KERNEL);
-	if (!ptr)
-		return ERR_PTR(-ENOMEM);
-
 	hwdev = hwmon_device_register_with_groups(dev, name, drvdata, groups);
-	if (IS_ERR(hwdev))
-		goto error;
+	if (IS_ERR_OR_NULL(hwdev))
+		return hwdev;
 
-	*ptr = hwdev;
-	devres_add(dev, ptr);
-	return hwdev;
-
-error:
-	devres_free(ptr);
+	int ret = devm_add_action_or_reset(dev, (void (*)(void *))hwmon_device_unregister, hwdev);
+	if (ret)
+		return ERR_PTR(ret);
+	
 	return hwdev;
 }
 EXPORT_SYMBOL_GPL(devm_hwmon_device_register_with_groups);
@@ -1045,27 +1040,20 @@ devm_hwmon_device_register_with_info(struct device *dev, const char *name,
 				     const struct hwmon_chip_info *chip,
 				     const struct attribute_group **extra_groups)
 {
-	struct device **ptr, *hwdev;
+	struct device *hwdev;
 
 	if (!dev)
 		return ERR_PTR(-EINVAL);
 
-	ptr = devres_alloc(devm_hwmon_release, sizeof(*ptr), GFP_KERNEL);
-	if (!ptr)
-		return ERR_PTR(-ENOMEM);
-
 	hwdev = hwmon_device_register_with_info(dev, name, drvdata, chip,
 						extra_groups);
-	if (IS_ERR(hwdev))
-		goto error;
+	if (IS_ERR_OR_NULL(hwdev))
+		return hwdev;
 
-	*ptr = hwdev;
-	devres_add(dev, ptr);
+	int ret = devm_add_action_or_reset(dev, (void (*)(void *))hwmon_device_unregister, hwdev);
+	if (ret)
+		return ERR_PTR(ret);
 
-	return hwdev;
-
-error:
-	devres_free(ptr);
 	return hwdev;
 }
 EXPORT_SYMBOL_GPL(devm_hwmon_device_register_with_info);

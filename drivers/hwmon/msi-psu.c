@@ -215,10 +215,8 @@ static int msipsu_handshake(struct msipsu_priv *priv)
 	ret = msipsu_usb_cmd_locked(priv, MSI_PSU_CMD_HANDSHAKE,
 				    MSI_PSU_CMD_READ, data, sizeof(data));
 
-	if (unlikely(ret < 0)) {
-		hid_err(priv->hdev, "handshake failed (%d)\n", ret);
+	if (unlikely(ret < 0))
 		return ret;
-	}
 
 	if (!strcmp(data, expected_product)) {
 		hid_err(priv->hdev, "handshake failed (expected %s)\n",
@@ -415,21 +413,11 @@ static int msipsu_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	if (unlikely(ret < 0))
 		return ret;
 
-	ret = hid_hw_start(hdev, HID_CONNECT_HIDRAW);
-	if (unlikely(ret < 0))
-		return ret;
-
-	ret = devm_add_action_or_reset(&hdev->dev,
-				       (void (*)(void *))hid_hw_stop, hdev);
+	ret = devm_hid_hw_start_or_reset(hdev, HID_CONNECT_HIDRAW);
 	if (unlikely(ret))
 		return ret;
 
-	ret = hid_hw_open(hdev);
-	if (unlikely(ret < 0))
-		return ret;
-
-	ret = devm_add_action_or_reset(&hdev->dev,
-				       (void (*)(void *))hid_hw_close, hdev);
+	ret = devm_hid_hw_open_or_reset(hdev);
 	if (unlikely(ret))
 		return ret;
 
@@ -439,19 +427,15 @@ static int msipsu_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	hid_device_io_start(hdev);
 
 	ret = msipsu_handshake(priv);
-	if (unlikely(ret < 0)) {
-		hid_err(hdev, "msi psu handshake failed (%d)\n", ret);
+	if (unlikely(ret < 0))
 		return ret;
-	}
 
 	priv->hwmon_dev = devm_hwmon_device_register_with_info(
 		&hdev->dev, "msipsu", priv, &msipsu_chip_info, NULL);
 
-	if (IS_ERR(priv->hwmon_dev)) {
-		ret = PTR_ERR(priv->hwmon_dev);
-		hid_err(hdev, "hwmon_device_register failed (%d)\n", ret);
-		return ret;
-	}
+	if (IS_ERR(priv->hwmon_dev))
+		return PTR_ERR(priv->hwmon_dev);
+	
 	return 0;
 }
 

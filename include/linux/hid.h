@@ -1120,6 +1120,9 @@ static inline int __must_check hid_parse(struct hid_device *hdev)
 
 int __must_check hid_hw_start(struct hid_device *hdev,
 			      unsigned int connect_mask);
+int __must_check devm_hid_hw_open_or_reset(struct hid_device *hdev);
+int __must_check devm_hid_hw_start_or_reset(struct hid_device *hdev,
+					    unsigned int connect_mask);
 void hid_hw_stop(struct hid_device *hdev);
 int __must_check hid_hw_open(struct hid_device *hdev);
 void hid_hw_close(struct hid_device *hdev);
@@ -1130,6 +1133,25 @@ int hid_hw_raw_request(struct hid_device *hdev,
 		       size_t len, enum hid_report_type rtype,
 		       enum hid_class_request reqtype);
 int hid_hw_output_report(struct hid_device *hdev, __u8 *buf, size_t len);
+
+int __must_check devm_hid_hw_open_or_reset(struct hid_device *hdev)
+{
+	int ret = hid_hw_open(hdev);
+	if (unlikely(ret < 0))
+		return ret;
+	return devm_add_action_or_reset(&hdev->dev,
+					(void (*)(void *))hid_hw_close, hdev);
+}
+
+int __must_check devm_hid_hw_start_or_reset(struct hid_device *hdev,
+					    unsigned int connect_mask)
+{
+	int ret = hid_hw_start(hdev, connect_mask);
+	if (unlikely(ret < 0))
+		return ret;
+	return devm_add_action_or_reset(&hdev->dev,
+					(void (*)(void *))hid_hw_stop, hdev);
+}
 
 /**
  * hid_hw_power - requests underlying HW to go into given power mode
